@@ -12,7 +12,13 @@ export function lastSyncedAt(): number {
 
 export function apiBase(): string {
   const v = localStorage.getItem(API_KEY);
-  return v == null ? DEFAULT_API : v;
+  if (v != null) return v; // explicit override always wins
+  // Served from the backend itself (home LAN / localhost) → sync same-origin, no cert/CORS.
+  if (typeof location !== "undefined" && !location.hostname.endsWith("github.io")) {
+    return location.origin;
+  }
+  // On the public GitHub Pages site → talk to the (HTTPS) home backend if reachable.
+  return DEFAULT_API;
 }
 
 export function setApiBase(v: string): void {
