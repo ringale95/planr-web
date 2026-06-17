@@ -1,0 +1,140 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import type { AppState, ScheduledBlock, SkipReason, Energy, ReviewAnswer } from "./types";
+import { GOALS, GOAL_DEADLINE } from "./tasks";
+import { generateWeekPlan, skipBlock, applyEnergy, addAppointment } from "./engine/scheduler";
+import { todayYmd, weekStartOf } from "./engine/dates";
+
+const KEY = "planr.state.v1";
+
+function toRecord(blocks: ScheduledBlock[]): Record<string, ScheduledBlock> {
+  const r: Record<string, ScheduledBlock> = {};
+  for (const b of blocks) r[b.id] = b;
+  return r;
+}
+
+function freshState(): AppState {
+  const ws = weekStartOf(todayYmd());
+  return {
+    goalDeadline: GOAL_DEADLINE,
+    weekStart: ws,
+    blocks: toRecord(generateWeekPlan(ws)),
+    energyByDate: {},
+    reviews: {},
+    goals: GOALS,
+    weightLog: [{ date: todayYmd(), kg: 58 }],
+    leetcode: { easy: 0, medium: 0, hard: 0 },
+    patterns: {},
+    updatedAt: Date.now(),
+  };
+}
+
+/** Roll the plan forward if a new week has started (keeps history). */
+function ensureCurrentWeek(state: AppState): AppState {
+  const ws = weekStartOf(todayYmd());
+  if (ws === state.weekStart) return state;
+  const fresh = generateWeekPlan(ws);
+  const blocks = { ...state.blocks };
+  for (const b of fresh) if (!blocks[b.id]) blocks[b.id] = b;
+  return { ...state, weekStart: ws, blocks };
+}
+
+function load(): AppState {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (!raw) return freshState();
+    const parsed = JSON.parse(raw) as AppState;
+    return ensureCurrentWeek({ ...freshState(), ...parsed, goals: GOALS });
+  } catch {
+    return freshState();
+  }
+}
+
+export function useStore() {
+  const [state, setState] = useState<AppState>(load);
+
+  useEffect(() => {
+    localStorage.setItem(KEY, JSON.stringify({ ...state, updatedAt: Date.now() }));
+  }, [state]);
+
+  const [toast, setToast] = useState<string>("");
+  useEffect(() => {
+    if (!toast) return;
+    const id = setTimeout(() => setToast(""), 4000);
+    return () => clearTimeout(id);
+  }, [toast]);
+
+  const complete = useCallback((id: string) => {
+    setState((s) => {
+      const b = s.blocks[id];
+      if (!b) return s;
+      return { ...s, blocks: { ...s.blocks, [id]: { ...b, status: "done", updatedAt: Date.now() } } };
+    });
+  }, []);
+
+  const skip = useCallback((id: string, reason: SkipReason) => {
+    setState((s) => {
+      const res = skipBlock(Object.values(s.blocks), id, reason, todayYmd());
+      setToast(res.message);
+      return { ...s, blocks: toRecord(res.blocks) };
+    });
+  }, []);
+
+  const setEnergy = useCallback((date: string, level: Energy) => {
+    setState((s) => {
+      const res = applyEnergy(Object.values(s.blocks), date, level);
+      if (res.message) setToast(res.message);
+      return { ...s, energyByDate: { ...s.energyByDate, [date]: level }, blocks: toRecord(res.blocks) };
+    });
+  }, []);
+
+  const addAppt = useCallback(
+    (title: string, date: string, startTime: string, durationMin: number) => {
+      setState((s) => {
+        const res = addAppointment(Object.values(s.blocks), title, date, startTime, durationMin);
+        setToast(res.message);
+        return { ...s, blocks: toRecord(res.blocks) };
+      });
+    },
+    []
+  );
+
+  const logLeetcode = useCallback((diff: "easy" | "medium" | "hard", pattern?: string) => {
+    setState((s) => ({
+      ...s,
+      leetcode: { ...s.leetcode, [diff]: s.leetcode[diff] + 1 },
+      patterns: pattern ? { ...s.patterns, [pattern]: (s.patterns[pattern] ?? 0) + 1 } : s.patterns,
+    }));
+  }, []);
+
+  const saveReview = useCallback((answers: Record<string, ReviewAnswer>) => {
+    setState((s) => ({
+      ...s,
+      reviews: {
+        ...s.reviews,
+        [s.weekStart]: { weekStart: s.weekStart, answers, updatedAt: Date.now() },
+      },
+    }));
+    setToast("Weekly check-in saved.");
+  }, []);
+
+  const logWeight = useCallback((kg: number) => {
+    setState((s) => ({ ...s, weightLog: [...s.weightLog, { date: todayYmd(), kg }] }));
+  }, []);
+
+  const blocksByDate = useCallback(
+    (date: string) =>
+      Object.values(state.blocks)
+        .filter((b) => b.date === date && b.status !== "skipped" && b.status !== "moved")
+        .sort((a, b) => a.startTime.localeCompare(b.startTime)),
+    [state.blocks]
+  );
+
+  const actions = useMemo(
+    () => ({ complete, skip, setEnergy, addAppt, logLeetcode, saveReview, logWeight, blocksByDate }),
+    [complete, skip, setEnergy, addAppt, logLeetcode, saveReview, logWeight, blocksByDate]
+  );
+
+  return { state, toast, ...actions };
+}
+
+export type Store = ReturnType<typeof useStore>;
