@@ -131,7 +131,98 @@ export interface RescheduleResult {
   message: string;
 }
 
-/** Skip a block; reason-aware reschedule into a later free slot (same day first). */
+const RANK: Record<Tier, number> = { P0: 0, P1: 1, P2: 2, Flex: 3, Upkeep: 4, Optional: 5 };
+// Coaching policy: a top-priority task may displace P2 and below (walks, hobbies,
+// errands, chores) — but never work, class, or fitness (P0/P1).
+const SACRIFICE_FROM = 2;
+const DSA_MIN_DURATIONS = [120, 90, 60]; // never-zero: shrink before skipping
+
+function dayIntervals(blocks: ScheduledBlock[], date: string, excludeId?: string): Interval[] {
+  return blocks
+    .filter((b) => b.date === date && b.id !== excludeId && b.status !== "skipped" && b.status !== "moved")
+    .map((b) => ({ start: minutes(b.startTime), end: minutes(b.startTime) + b.durationMin }));
+}
+
+/** Move a weekly/biweekly task to another day this week. Daily tasks just drop — they recur tomorrow. */
+function relocateAway(blocks: ScheduledBlock[], block: ScheduledBlock, fromDate: string, tired: boolean): void {
+  const task = TASKS.find((t) => t.id === block.taskId);
+  if (!task || task.cadence === "daily") {
+    block.status = "skipped"; // recurs tomorrow — no duplicate, no cross-day move
+    return;
+  }
+  block.status = "moved";
+  const eMin = task.earliest ? minutes(task.earliest) : DAY_START;
+  const lMin = task.latest ? minutes(task.latest) : DAY_END;
+  const avoid = new Set(task.avoidDays ?? []);
+  const weekStart = addDays(fromDate, -new Date(fromDate + "T00:00:00").getDay());
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter((d) => d > fromDate);
+  for (const date of dates) {
+    const day = new Date(date + "T00:00:00").getDay();
+    if (avoid.has(day)) continue;
+    if (tired && block.physicalLoad === "high") continue;
+    const slot = findFreeSlot(dayIntervals(blocks, date), task.durationMin, eMin, lMin);
+    if (slot != null) {
+      const moved = blockFromTask(task, date, fromMinutes(slot));
+      moved.id = `${date}__${task.id}__resched`;
+      moved.movedFromDate = fromDate;
+      blocks.push(moved);
+      return;
+    }
+  }
+  block.status = "skipped";
+}
+
+/** Keep a top-priority relocatable task (DSA) TODAY: use a gap, else displace P2-and-below, else shrink. */
+function keepTopPriorityToday(
+  blocks: ScheduledBlock[],
+  target: ScheduledBlock,
+  task: TaskDef,
+  fromDate: string,
+  tired: boolean
+): RescheduleResult {
+  const rawAfter = fromDate === todayYmd() ? Math.max(DAY_START, nowMinutes() + 5) : DAY_START;
+  const afterMin = Math.ceil(rawAfter / 15) * 15; // snap to a clean 15-min grid
+  target.status = "moved"; // free its slot; we re-add a placed block
+
+  const tryPlace = (dur: number): RescheduleResult | null => {
+    for (let s = afterMin; s + dur <= DAY_END; s += 15) {
+      const e = s + dur;
+      const overlap = blocks.filter(
+        (b) =>
+          b.date === fromDate &&
+          b.id !== target.id &&
+          b.status === "planned" &&
+          minutes(b.startTime) < e &&
+          minutes(b.startTime) + b.durationMin > s
+      );
+      // window is usable only if everything in it is low-priority and movable
+      if (overlap.some((b) => b.locked || RANK[b.tier] < SACRIFICE_FROM)) continue;
+      const freed: string[] = [];
+      for (const o of overlap) {
+        relocateAway(blocks, o, fromDate, tired);
+        freed.push(o.title);
+      }
+      const placed = blockFromTask(task, fromDate, fromMinutes(s));
+      placed.id = `${fromDate}__${task.id}__resched`;
+      placed.durationMin = dur;
+      placed.movedFromDate = target.movedFromDate ?? target.date;
+      blocks.push(placed);
+      const shortened = dur < task.durationMin ? ` (shortened to ${dur}m to fit)` : "";
+      const cleared = freed.length ? ` — cleared ${freed.join(", ")}` : "";
+      return { blocks, message: `${task.title} → today ${fromMinutes(s)}${shortened}${cleared}.` };
+    }
+    return null;
+  };
+
+  for (const dur of [task.durationMin, ...DSA_MIN_DURATIONS]) {
+    const res = tryPlace(dur);
+    if (res) return res;
+  }
+  target.status = "planned"; // genuinely no room — keep it owed, don't pretend it's done
+  return { blocks, message: `No room for ${task.title} today even after clearing lower-priority — it stays owed. A short session tonight?` };
+}
+
+/** Skip/miss a block — priority-aware: DSA stays today (displacing fluff); fluff just yields. */
 export function skipBlock(
   all: ScheduledBlock[],
   blockId: string,
@@ -144,14 +235,12 @@ export function skipBlock(
 
   target.skipReason = reason;
   target.updatedAt = stamp();
+  const tired = reason === "tired";
 
   // Truly fixed must-dos (class, work, appointments) can't be time-shifted.
   if (target.commitment === "must" && target.locked) {
     target.status = "skipped";
-    return {
-      blocks,
-      message: `${target.title} is a fixed commitment — it can't be moved. Logged as missed.`,
-    };
+    return { blocks, message: `${target.title} is a fixed commitment — logged as missed.` };
   }
 
   const task = TASKS.find((t) => t.id === target.taskId);
@@ -160,42 +249,13 @@ export function skipBlock(
     return { blocks, message: `Skipped ${target.title}.` };
   }
 
-  // Relocatable must-dos (DSA) may land in ANY free gap; flexible tasks keep their window.
-  const tired = reason === "tired";
-  const eMin = task.relocatable ? DAY_START : task.earliest ? minutes(task.earliest) : DAY_START;
-  const lMin = task.relocatable ? DAY_END : task.latest ? minutes(task.latest) : DAY_END;
-  const avoid = new Set(task.avoidDays ?? []);
+  // Relocatable top-priority work (DSA) is protected: it stays today.
+  if (task.relocatable) return keepTopPriorityToday(blocks, target, task, fromDate, tired);
 
-  // Mark moved before searching so its own slot frees up.
-  target.status = "moved";
-  const occ = occupiedByDate(blocks);
-
-  const weekStart = addDays(fromDate, -new Date(fromDate + "T00:00:00").getDay());
-  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter((d) => d >= fromDate);
-
-  for (const date of dates) {
-    // Tired: rest today + never the same physical work.
-    if (date === fromDate && tired) continue;
-    if (tired && target.physicalLoad === "high" && date === fromDate) continue;
-    const day = new Date(date + "T00:00:00").getDay();
-    if (avoid.has(day)) continue;
-    const eEff = date === todayYmd() ? Math.max(eMin, nowMinutes() + 5) : eMin;
-    const slot = findFreeSlot(occ[date] ?? [], task.durationMin, eEff, lMin);
-    if (slot != null) {
-      const moved = blockFromTask(task, date, fromMinutes(slot));
-      moved.id = `${date}__${task.id}__resched`;
-      moved.movedFromDate = fromDate;
-      blocks.push(moved);
-      const label = date === fromDate ? "later today" : niceDay(date);
-      return { blocks, message: `${target.title} → ${label}, ${fromMinutes(slot)}.` };
-    }
-  }
-
-  target.status = "skipped";
-  return {
-    blocks,
-    message: `${target.title} — no open slot this week, it rolls to next week.`,
-  };
+  // Everything else: weekly tasks move to another day; daily tasks recur tomorrow.
+  const cadenceLabel = task.cadence === "daily" ? "it's back tomorrow" : "moved to a free slot this week";
+  relocateAway(blocks, target, fromDate, tired);
+  return { blocks, message: `${target.title} — ${cadenceLabel}.` };
 }
 
 /** On app open: auto-move overdue, movable/relocatable tasks to a later gap today. */

@@ -5,7 +5,7 @@ import { generateWeekPlan, skipBlock, applyEnergy, addAppointment, rolloverOverd
 import { todayYmd, weekStartOf } from "./engine/dates";
 import { pullState, pushState, apiBase } from "./sync";
 
-const KEY = "planr.state.v1";
+const KEY = "planr.state.v2";
 
 function toRecord(blocks: ScheduledBlock[]): Record<string, ScheduledBlock> {
   const r: Record<string, ScheduledBlock> = {};
