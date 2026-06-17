@@ -4,6 +4,7 @@ import { GOALS, GOAL_DEADLINE } from "./tasks";
 import { generateWeekPlan, skipBlock, applyEnergy, addAppointment, rolloverOverdue } from "./engine/scheduler";
 import { todayYmd, weekStartOf } from "./engine/dates";
 import { pullState, pushState, apiBase } from "./sync";
+import { isConnected as gcalConnected, pushEvent as gcalPush } from "./gcal";
 
 const KEY = "planr.state.v2";
 
@@ -116,6 +117,12 @@ export function useStore() {
         setToast(res.message);
         return { ...s, blocks: toRecord(res.blocks) };
       });
+      // mirror to Google Calendar if connected (fire-and-forget)
+      if (gcalConnected()) {
+        void gcalPush({ title, date, startTime, durationMin }).then((ok) => {
+          if (ok) setToast(`"${title}" added to Google Calendar too.`);
+        });
+      }
     },
     []
   );

@@ -3,6 +3,7 @@ import type { Store } from "../store";
 import type { ReviewAnswer } from "../types";
 import { DIMENSIONS, leetcodeProjection } from "../engine/score";
 import { daysUntil } from "../engine/dates";
+import { getClientId, setClientId, connect, isConnected } from "../gcal";
 
 const PATTERNS = [
   "Arrays & Hashing", "Two Pointers", "Sliding Window", "Stack", "Binary Search",
@@ -66,7 +67,48 @@ export function Progress({ store }: { store: Store }) {
       </section>
 
       <WeeklyCheckin store={store} />
+
+      <GoogleCalendar />
     </div>
+  );
+}
+
+function GoogleCalendar() {
+  const [cid, setCid] = useState(getClientId());
+  const [status, setStatus] = useState<"idle" | "connecting" | "ok" | "fail">(
+    isConnected() ? "ok" : "idle"
+  );
+
+  const onConnect = async () => {
+    setClientId(cid);
+    setStatus("connecting");
+    try {
+      const ok = await connect();
+      setStatus(ok ? "ok" : "fail");
+    } catch {
+      setStatus("fail");
+    }
+  };
+
+  return (
+    <section className="goal-card gcal">
+      <div className="goal-head"><span>Google Calendar</span></div>
+      <p className="gcal-sub">
+        Connect once to mirror appointments you add into your Google Calendar.
+        Paste your OAuth client ID (setup steps are in the README).
+      </p>
+      <input
+        className="gcal-input"
+        placeholder="xxxx.apps.googleusercontent.com"
+        value={cid}
+        onChange={(e) => setCid(e.target.value)}
+      />
+      <button className="btn primary wide" disabled={!cid || status === "connecting"} onClick={onConnect}>
+        {status === "ok" ? "Connected ✓ — reconnect" : status === "connecting" ? "Connecting…" : "Connect Google Calendar"}
+      </button>
+      {status === "fail" && <p className="gcal-fail">Couldn't connect — check the client ID and authorized origin.</p>}
+      {status === "ok" && <p className="gcal-ok">Connected. New appointments will sync to Google Calendar.</p>}
+    </section>
   );
 }
 
