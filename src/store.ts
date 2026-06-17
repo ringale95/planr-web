@@ -14,6 +14,60 @@ function toRecord(blocks: ScheduledBlock[]): Record<string, ScheduledBlock> {
   return r;
 }
 
+/** Merge two block maps, keeping whichever version of each block was updated last. */
+function mergeBlocks(
+  local: Record<string, ScheduledBlock>,
+  server: Record<string, ScheduledBlock>
+): Record<string, ScheduledBlock> {
+  const out: Record<string, ScheduledBlock> = { ...local };
+  for (const [id, b] of Object.entries(server)) {
+    if (!out[id] || (b.updatedAt ?? 0) > (out[id].updatedAt ?? 0)) out[id] = b;
+  }
+  return out;
+}
+
+function maxMap(a: Record<string, number> = {}, b: Record<string, number> = {}): Record<string, number> {
+  const out = { ...a };
+  for (const [k, v] of Object.entries(b)) out[k] = Math.max(out[k] ?? 0, v);
+  return out;
+}
+
+/**
+ * Field-level merge so a change on one device is never clobbered by a stale whole-blob
+ * from another. Blocks merge by per-block updatedAt; counters take the max; logs union.
+ */
+function mergeState(local: AppState, server: AppState): AppState {
+  const byDate = (arr: { date: string }[]) => {
+    const m: Record<string, any> = {};
+    for (const e of arr) m[e.date] = e;
+    return m;
+  };
+  return {
+    ...local,
+    goalDeadline: local.goalDeadline,
+    weekStart: local.weekStart,
+    blocks: mergeBlocks(local.blocks, server.blocks ?? {}),
+    energyByDate: { ...(server.energyByDate ?? {}), ...local.energyByDate },
+    reviews: (() => {
+      const out = { ...(server.reviews ?? {}) };
+      for (const [k, r] of Object.entries(local.reviews ?? {})) {
+        if (!out[k] || (r.updatedAt ?? 0) >= (out[k].updatedAt ?? 0)) out[k] = r;
+      }
+      return out;
+    })(),
+    weightLog: Object.values({ ...byDate(server.weightLog ?? []), ...byDate(local.weightLog ?? []) }).sort(
+      (a: any, b: any) => a.date.localeCompare(b.date)
+    ),
+    leetcode: {
+      easy: Math.max(local.leetcode.easy, server.leetcode?.easy ?? 0),
+      medium: Math.max(local.leetcode.medium, server.leetcode?.medium ?? 0),
+      hard: Math.max(local.leetcode.hard, server.leetcode?.hard ?? 0),
+    },
+    patterns: maxMap(local.patterns, server.patterns),
+    goals: GOALS,
+  };
+}
+
 function freshState(): AppState {
   const ws = weekStartOf(todayYmd());
   return {
@@ -77,10 +131,11 @@ export function useStore() {
     let cancelled = false;
     const doPull = async () => {
       const server = await pullState();
-      if (cancelled || !server) return;
-      const raw = localStorage.getItem(KEY);
-      const localUpdated = raw ? (JSON.parse(raw).updatedAt ?? 0) : 0;
-      if (server.updatedAt > localUpdated) setState(ensureCurrentWeek(server.state));
+      if (cancelled || !server || !server.state) return;
+      setState((prev) => {
+        const merged = ensureCurrentWeek(mergeState(prev, server.state));
+        return JSON.stringify(merged) === JSON.stringify(prev) ? prev : merged;
+      });
     };
     void doPull();
     const id = setInterval(() => void doPull(), 15000);
