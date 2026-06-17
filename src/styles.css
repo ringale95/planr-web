@@ -53,6 +53,21 @@ input, select, textarea { font-family: inherit; font-size: 16px; }
   letter-spacing: 0.2px;
 }
 .brand .star { color: var(--apricot); }
+.syncdot {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  margin-left: 8px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 700;
+  vertical-align: middle;
+  transition: background 0.3s var(--ease);
+}
+.syncdot.synced { background: var(--sage); color: #fff; }
+.syncdot.pending { background: var(--surface-2); color: var(--muted); }
+.syncdot.offline { background: transparent; color: var(--line); border: 1px solid var(--line); }
 .datenav { display: flex; align-items: center; gap: 6px; }
 .datenav button {
   border: none;

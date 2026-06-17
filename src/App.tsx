@@ -7,6 +7,21 @@ import { prettyDate, todayYmd, addDays } from "./engine/dates";
 
 type Tab = "home" | "week" | "progress";
 
+function SyncDot({ status }: { status: "idle" | "pending" | "synced" | "offline" }) {
+  if (status === "idle") return null;
+  const map = {
+    synced: { cls: "synced", label: "Synced", glyph: "✓" },
+    pending: { cls: "pending", label: "Syncing…", glyph: "⋯" },
+    offline: { cls: "offline", label: "Not synced (offline)", glyph: "•" },
+  } as const;
+  const s = map[status];
+  return (
+    <span className={`syncdot ${s.cls}`} title={s.label} aria-label={s.label}>
+      {s.glyph}
+    </span>
+  );
+}
+
 export default function App() {
   const store = useStore();
   const [tab, setTab] = useState<Tab>("home");
@@ -17,6 +32,7 @@ export default function App() {
       <header className="topbar">
         <div className="brand">
           <span className="star">✦</span> Planr
+          <SyncDot status={store.syncStatus} />
         </div>
         {tab === "home" && (
           <div className="datenav">

@@ -54,13 +54,21 @@ function load(): AppState {
 
 export function useStore() {
   const [state, setState] = useState<AppState>(load);
+  const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "synced" | "offline">("idle");
 
   // Persist locally (source of truth) + debounced push to home backend when reachable.
   useEffect(() => {
     const snap = { ...state, updatedAt: Date.now() };
     localStorage.setItem(KEY, JSON.stringify(snap));
-    if (!apiBase()) return;
-    const id = setTimeout(() => void pushState(snap), 800);
+    if (!apiBase()) {
+      setSyncStatus("idle");
+      return;
+    }
+    setSyncStatus("pending");
+    const id = setTimeout(async () => {
+      const ok = await pushState(snap);
+      setSyncStatus(ok ? "synced" : "offline");
+    }, 800);
     return () => clearTimeout(id);
   }, [state]);
 
@@ -163,7 +171,7 @@ export function useStore() {
     [complete, skip, setEnergy, addAppt, logLeetcode, saveReview, logWeight, blocksByDate]
   );
 
-  return { state, toast, ...actions };
+  return { state, toast, syncStatus, ...actions };
 }
 
 export type Store = ReturnType<typeof useStore>;
