@@ -4,7 +4,7 @@ import type { ReviewAnswer } from "../types";
 import { DIMENSIONS, leetcodeProjection } from "../engine/score";
 import { daysUntil } from "../engine/dates";
 import { getClientId, setClientId, connect, isConnected } from "../gcal";
-import { apiBase, setApiBase, health } from "../sync";
+import { apiBase, setApiBase, health, lastSyncedAt } from "../sync";
 
 const PATTERNS = [
   "Arrays & Hashing", "Two Pointers", "Sliding Window", "Stack", "Binary Search",
@@ -103,6 +103,9 @@ function HomeSync() {
       <button className="btn primary wide" disabled={status === "checking"} onClick={test}>
         {status === "checking" ? "Checking…" : "Test connection"}
       </button>
+      <p className="gcal-sub" style={{ marginTop: 10 }}>
+        {lastSyncedAt() ? `Last pushed to backend: ${new Date(lastSyncedAt()).toLocaleString()}` : "Not synced yet this device."}
+      </p>
       {status === "ok" && <p className="gcal-ok">Reachable ✓ {info}</p>}
       {status === "fail" && (
         <p className="gcal-fail">

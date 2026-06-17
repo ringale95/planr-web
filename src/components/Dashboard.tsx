@@ -164,9 +164,10 @@ function RowCard({ block, store, onNotNow }: { block: ScheduledBlock; store: Sto
 function DayTools({ store }: { store: Store }) {
   const [open, setOpen] = useState<"none" | "appt">("none");
   const [title, setTitle] = useState("");
+  const today = todayYmd();
+  const [date, setDate] = useState(today);
   const [time, setTime] = useState("12:00");
   const [dur, setDur] = useState(60);
-  const today = todayYmd();
   const energy = store.state.energyByDate[today] ?? "full";
 
   return (
@@ -185,6 +186,7 @@ function DayTools({ store }: { store: Store }) {
       {open === "appt" ? (
         <div className="appt-form">
           <input placeholder="Appointment title" value={title} onChange={(e) => setTitle(e.target.value)} />
+          <input type="date" value={date} min={today} onChange={(e) => setDate(e.target.value)} />
           <div className="appt-row">
             <input type="time" value={time} onChange={(e) => setTime(e.target.value)} />
             <input type="number" min={15} step={15} value={dur} onChange={(e) => setDur(Number(e.target.value))} />
@@ -192,8 +194,9 @@ function DayTools({ store }: { store: Store }) {
               className="btn primary"
               onClick={() => {
                 if (title.trim()) {
-                  store.addAppt(title.trim(), today, time, dur);
+                  store.addAppt(title.trim(), date, time, dur);
                   setTitle("");
+                  setDate(today);
                   setOpen("none");
                 }
               }}

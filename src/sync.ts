@@ -4,6 +4,11 @@ import type { AppState } from "./types";
 // localStorage.setItem("planr.api", "https://<ip>:<port>") or "" to disable.
 const DEFAULT_API = "https://10.0.0.151:8443";
 const API_KEY = "planr.api";
+const LAST_SYNC_KEY = "planr.lastSyncedAt";
+
+export function lastSyncedAt(): number {
+  return Number(localStorage.getItem(LAST_SYNC_KEY) || 0);
+}
 
 export function apiBase(): string {
   const v = localStorage.getItem(API_KEY);
@@ -67,6 +72,7 @@ export async function pushState(state: AppState): Promise<boolean> {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ updatedAt: state.updatedAt, state }),
     });
+    if (res.ok) localStorage.setItem(LAST_SYNC_KEY, String(Date.now()));
     return res.ok;
   } catch {
     return false;
