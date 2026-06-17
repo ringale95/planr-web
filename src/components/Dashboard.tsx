@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Store } from "../store";
 import type { ScheduledBlock, SkipReason } from "../types";
 import { computeScore } from "../engine/score";
-import { todayYmd, nowMinutes, minutes, DAY_FULL, parseYmd } from "../engine/dates";
+import { todayYmd, nowMinutes, minutes, DAY_FULL, parseYmd, energyLevel } from "../engine/dates";
 import { NotNowSheet } from "./NotNowSheet";
 
 export const TYPE_EMOJI: Record<string, string> = {
@@ -168,7 +168,7 @@ function DayTools({ store }: { store: Store }) {
   const [date, setDate] = useState(today);
   const [time, setTime] = useState("12:00");
   const [dur, setDur] = useState(60);
-  const energy = store.state.energyByDate[today] ?? "full";
+  const energy = energyLevel(store.state.energyByDate[today]);
 
   return (
     <section className="tools">

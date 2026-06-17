@@ -41,6 +41,10 @@ export interface TaskDef {
 export type BlockStatus = "planned" | "done" | "skipped" | "moved";
 export type SkipReason = "tired" | "notime" | "notfeeling" | "cameup";
 export type Energy = "full" | "low" | "exhausted";
+export interface EnergyEntry {
+  level: Energy;
+  updatedAt: number;
+}
 
 export interface ScheduledBlock {
   id: string;
@@ -87,7 +91,7 @@ export interface AppState {
   goalDeadline: string;          // YYYY-MM-DD (Feb 2027)
   weekStart: string;             // Sunday of the currently-generated week
   blocks: Record<string, ScheduledBlock>;
-  energyByDate: Record<string, Energy>;
+  energyByDate: Record<string, EnergyEntry>;
   reviews: Record<string, WeeklyReview>;
   goals: Goal[];
   weightLog: WeightEntry[];

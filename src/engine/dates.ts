@@ -56,6 +56,12 @@ export function prettyDate(s: string): string {
   return `${DAY_NAMES[d.getDay()]} · ${MONTHS[d.getMonth()]} ${d.getDate()}`;
 }
 
+/** Read an energy value tolerant of both the old (string) and new ({level,updatedAt}) shapes. */
+export function energyLevel(e: unknown): string {
+  if (!e) return "full";
+  return typeof e === "string" ? e : ((e as { level?: string }).level ?? "full");
+}
+
 export function daysUntil(deadline: string): number {
   const end = parseYmd(deadline).getTime();
   const now = parseYmd(todayYmd()).getTime();

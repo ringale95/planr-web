@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import type { AppState, ScheduledBlock, SkipReason, Energy, ReviewAnswer } from "./types";
+import type { AppState, ScheduledBlock, SkipReason, Energy, EnergyEntry, ReviewAnswer } from "./types";
 import { GOALS, GOAL_DEADLINE } from "./tasks";
 import { generateWeekPlan, skipBlock, applyEnergy, addAppointment, rolloverOverdue } from "./engine/scheduler";
 import { todayYmd, weekStartOf } from "./engine/dates";
@@ -26,6 +26,22 @@ function mergeBlocks(
   return out;
 }
 
+/** Merge energy per date, keeping whichever was set last (tolerant of old string entries). */
+function mergeEnergy(
+  a: Record<string, any> = {},
+  b: Record<string, any> = {}
+): Record<string, EnergyEntry> {
+  const norm = (e: any): EnergyEntry =>
+    typeof e === "string" ? { level: e as Energy, updatedAt: 0 } : e;
+  const out: Record<string, EnergyEntry> = {};
+  for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) {
+    const ea = a[k] ? norm(a[k]) : null;
+    const eb = b[k] ? norm(b[k]) : null;
+    out[k] = !ea ? eb! : !eb ? ea : eb.updatedAt > ea.updatedAt ? eb : ea;
+  }
+  return out;
+}
+
 function maxMap(a: Record<string, number> = {}, b: Record<string, number> = {}): Record<string, number> {
   const out = { ...a };
   for (const [k, v] of Object.entries(b)) out[k] = Math.max(out[k] ?? 0, v);
@@ -47,7 +63,7 @@ function mergeState(local: AppState, server: AppState): AppState {
     goalDeadline: local.goalDeadline,
     weekStart: local.weekStart,
     blocks: mergeBlocks(local.blocks, server.blocks ?? {}),
-    energyByDate: { ...(server.energyByDate ?? {}), ...local.energyByDate },
+    energyByDate: mergeEnergy(local.energyByDate, server.energyByDate),
     reviews: (() => {
       const out = { ...(server.reviews ?? {}) };
       for (const [k, r] of Object.entries(local.reviews ?? {})) {
@@ -172,7 +188,11 @@ export function useStore() {
     setState((s) => {
       const res = applyEnergy(Object.values(s.blocks), date, level);
       if (res.message) setToast(res.message);
-      return { ...s, energyByDate: { ...s.energyByDate, [date]: level }, blocks: toRecord(res.blocks) };
+      return {
+        ...s,
+        energyByDate: { ...s.energyByDate, [date]: { level, updatedAt: Date.now() } },
+        blocks: toRecord(res.blocks),
+      };
     });
   }, []);
 

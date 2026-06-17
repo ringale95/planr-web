@@ -1,5 +1,5 @@
 import type { AppState, ScheduledBlock, Tier, ReviewAnswer } from "../types";
-import { addDays, todayYmd, daysUntil } from "./dates";
+import { addDays, todayYmd, daysUntil, energyLevel } from "./dates";
 
 export interface DimConfig {
   key: string;
@@ -110,7 +110,7 @@ export function computeScore(state: AppState): ScoreResult {
         const flex = countDone(wb, ["Painting", "Reading", "Social"]);
         const base = Math.min(100, Math.round((flex / 4) * 100));
         const exhausted = Object.entries(state.energyByDate).filter(
-          ([d, e]) => d >= state.weekStart && d <= addDays(state.weekStart, 6) && e === "exhausted"
+          ([d, e]) => d >= state.weekStart && d <= addDays(state.weekStart, 6) && energyLevel(e) === "exhausted"
         ).length;
         return Math.max(0, base - exhausted * 10);
       }
