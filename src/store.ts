@@ -72,18 +72,21 @@ export function useStore() {
     return () => clearTimeout(id);
   }, [state]);
 
-  // On open: pull from the home backend; adopt it only if it's newer.
+  // Pull from the home backend on open AND every 15s, adopting it only if newer.
   useEffect(() => {
     let cancelled = false;
-    void (async () => {
+    const doPull = async () => {
       const server = await pullState();
       if (cancelled || !server) return;
       const raw = localStorage.getItem(KEY);
       const localUpdated = raw ? (JSON.parse(raw).updatedAt ?? 0) : 0;
       if (server.updatedAt > localUpdated) setState(ensureCurrentWeek(server.state));
-    })();
+    };
+    void doPull();
+    const id = setInterval(() => void doPull(), 15000);
     return () => {
       cancelled = true;
+      clearInterval(id);
     };
   }, []);
 
