@@ -10,6 +10,23 @@ export function apiBase(): string {
   return v == null ? DEFAULT_API : v;
 }
 
+export function setApiBase(v: string): void {
+  localStorage.setItem(API_KEY, v.trim());
+}
+
+/** Probe the home backend; returns its last-synced timestamp, or null if unreachable. */
+export async function health(): Promise<{ ok: boolean; updatedAt: number } | null> {
+  const base = apiBase();
+  if (!base) return null;
+  try {
+    const res = await withTimeout(`${base}/health`, {}, 2500);
+    if (!res.ok) return null;
+    return (await res.json()) as { ok: boolean; updatedAt: number };
+  } catch {
+    return null;
+  }
+}
+
 interface Snapshot {
   updatedAt: number;
   state: AppState;

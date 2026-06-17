@@ -4,6 +4,7 @@ import type { ReviewAnswer } from "../types";
 import { DIMENSIONS, leetcodeProjection } from "../engine/score";
 import { daysUntil } from "../engine/dates";
 import { getClientId, setClientId, connect, isConnected } from "../gcal";
+import { apiBase, setApiBase, health } from "../sync";
 
 const PATTERNS = [
   "Arrays & Hashing", "Two Pointers", "Sliding Window", "Stack", "Binary Search",
@@ -68,8 +69,47 @@ export function Progress({ store }: { store: Store }) {
 
       <WeeklyCheckin store={store} />
 
+      <HomeSync />
       <GoogleCalendar />
     </div>
+  );
+}
+
+function HomeSync() {
+  const [base, setBase] = useState(apiBase());
+  const [status, setStatus] = useState<"idle" | "checking" | "ok" | "fail">("idle");
+  const [info, setInfo] = useState("");
+
+  const test = async () => {
+    setApiBase(base);
+    setStatus("checking");
+    const h = await health();
+    if (h?.ok) {
+      setStatus("ok");
+      setInfo(h.updatedAt ? `Last synced ${new Date(h.updatedAt).toLocaleString()}` : "Connected — no data yet");
+    } else {
+      setStatus("fail");
+    }
+  };
+
+  return (
+    <section className="goal-card">
+      <div className="goal-head"><span>Home sync</span></div>
+      <p className="gcal-sub">
+        Syncs your data to the Planr backend on your laptop when you're on the same Wi-Fi.
+        Leave the address blank to turn sync off.
+      </p>
+      <input className="gcal-input" placeholder="https://10.0.0.151:8443" value={base} onChange={(e) => setBase(e.target.value)} />
+      <button className="btn primary wide" disabled={status === "checking"} onClick={test}>
+        {status === "checking" ? "Checking…" : "Test connection"}
+      </button>
+      {status === "ok" && <p className="gcal-ok">Reachable ✓ {info}</p>}
+      {status === "fail" && (
+        <p className="gcal-fail">
+          Can't reach it. On the same Wi-Fi? Started the backend? And visit the address once in this browser to trust its certificate.
+        </p>
+      )}
+    </section>
   );
 }
 
