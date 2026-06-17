@@ -56,17 +56,28 @@ function weekBlocks(state: AppState): ScheduledBlock[] {
   return Object.values(state.blocks).filter((b) => b.date >= start && b.date <= end);
 }
 
-/** done / (done + missed) among blocks already elapsed (date <= today). */
+/**
+ * Credit ratio among elapsed blocks (date <= today). Done-on-time = full credit,
+ * done-after-a-move = 0.85 (the small ding), missed = 0. Relocated originals
+ * (status "moved") are excluded so a shifted task isn't double-counted.
+ */
 function ratioByTypes(blocks: ScheduledBlock[], types: string[]): number | null {
   const t = todayYmd();
-  const considered = blocks.filter((b) => types.includes(b.type) && b.date <= t);
+  const considered = blocks.filter(
+    (b) => types.includes(b.type) && b.date <= t && b.status !== "moved"
+  );
   if (!considered.length) return null;
-  const done = considered.filter((b) => b.status === "done").length;
-  const missed = considered.filter(
-    (b) => b.status === "skipped" || (b.status === "planned" && b.date < t)
-  ).length;
-  const denom = done + missed;
-  return denom ? done / denom : null;
+  let credit = 0;
+  let denom = 0;
+  for (const b of considered) {
+    if (b.status === "done") {
+      credit += b.movedFromDate ? 0.85 : 1;
+      denom++;
+    } else if (b.status === "skipped" || (b.status === "planned" && b.date < t)) {
+      denom++;
+    }
+  }
+  return denom ? credit / denom : null;
 }
 
 function countDone(blocks: ScheduledBlock[], types: string[]): number {

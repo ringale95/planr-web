@@ -1,6 +1,6 @@
 import type { ScheduledBlock, TaskDef, SkipReason, Energy, Tier } from "../types";
 import { TASKS, commitmentForTier } from "../tasks";
-import { addDays, minutes, fromMinutes } from "./dates";
+import { addDays, minutes, fromMinutes, nowMinutes, todayYmd } from "./dates";
 
 const DAY_START = 330; // 05:30
 const DAY_END = 1410; // 23:30 — sleep floor
@@ -24,7 +24,7 @@ function blockFromTask(task: TaskDef, date: string, time: string): ScheduledBloc
     startTime: time,
     durationMin: task.durationMin,
     status: "planned",
-    locked: !!task.fixedSlots,
+    locked: !!task.fixedSlots && !task.relocatable,
     physicalLoad: task.physicalLoad,
     cognitiveLoad: task.cognitiveLoad,
     updatedAt: stamp(),
@@ -131,7 +131,7 @@ export interface RescheduleResult {
   message: string;
 }
 
-/** Skip a block; reason-aware reschedule into a later free slot this week. */
+/** Skip a block; reason-aware reschedule into a later free slot (same day first). */
 export function skipBlock(
   all: ScheduledBlock[],
   blockId: string,
@@ -142,55 +142,79 @@ export function skipBlock(
   const target = blocks.find((b) => b.id === blockId);
   if (!target) return { blocks, message: "" };
 
-  target.status = "skipped";
   target.skipReason = reason;
   target.updatedAt = stamp();
 
-  if (target.commitment === "must") {
+  // Truly fixed must-dos (class, work, appointments) can't be time-shifted.
+  if (target.commitment === "must" && target.locked) {
+    target.status = "skipped";
     return {
       blocks,
-      message: `${target.title} is non-negotiable — it stays on your plate. Try to circle back today.`,
+      message: `${target.title} is a fixed commitment — it can't be moved. Logged as missed.`,
     };
   }
 
   const task = TASKS.find((t) => t.id === target.taskId);
-  if (!task) return { blocks, message: `Skipped ${target.title}.` };
-
-  // Tired → never reslot a physically demanding task, and not same day.
-  const tired = reason === "tired";
-  const eMin = task.earliest ? minutes(task.earliest) : DAY_START;
-  const lMin = task.latest ? minutes(task.latest) : DAY_END;
-  const avoid = new Set(task.avoidDays ?? []);
-
-  const weekStart = addDays(fromDate, -new Date(fromDate + "T00:00:00").getDay());
-  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter(
-    (d) => d >= fromDate
-  );
-  const occ = occupiedByDate(blocks);
-
-  if (tired && target.physicalLoad === "high") {
-    // keep it, just push to a different day — no replacement needed
+  if (!task) {
+    target.status = "skipped";
+    return { blocks, message: `Skipped ${target.title}.` };
   }
 
+  // Relocatable must-dos (DSA) may land in ANY free gap; flexible tasks keep their window.
+  const tired = reason === "tired";
+  const eMin = task.relocatable ? DAY_START : task.earliest ? minutes(task.earliest) : DAY_START;
+  const lMin = task.relocatable ? DAY_END : task.latest ? minutes(task.latest) : DAY_END;
+  const avoid = new Set(task.avoidDays ?? []);
+
+  // Mark moved before searching so its own slot frees up.
+  target.status = "moved";
+  const occ = occupiedByDate(blocks);
+
+  const weekStart = addDays(fromDate, -new Date(fromDate + "T00:00:00").getDay());
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i)).filter((d) => d >= fromDate);
+
   for (const date of dates) {
-    if (date === fromDate && tired) continue; // rest today
+    // Tired: rest today + never the same physical work.
+    if (date === fromDate && tired) continue;
+    if (tired && target.physicalLoad === "high" && date === fromDate) continue;
     const day = new Date(date + "T00:00:00").getDay();
     if (avoid.has(day)) continue;
-    const slot = findFreeSlot(occ[date] ?? [], task.durationMin, eMin, lMin);
+    const eEff = date === todayYmd() ? Math.max(eMin, nowMinutes() + 5) : eMin;
+    const slot = findFreeSlot(occ[date] ?? [], task.durationMin, eEff, lMin);
     if (slot != null) {
       const moved = blockFromTask(task, date, fromMinutes(slot));
-      moved.id = `${date}__${task.id}__moved`;
+      moved.id = `${date}__${task.id}__resched`;
       moved.movedFromDate = fromDate;
       blocks.push(moved);
       const label = date === fromDate ? "later today" : niceDay(date);
-      return { blocks, message: `${target.title} moved to ${label}, ${fromMinutes(slot)}.` };
+      return { blocks, message: `${target.title} → ${label}, ${fromMinutes(slot)}.` };
     }
   }
 
+  target.status = "skipped";
   return {
     blocks,
-    message: `${target.title} skipped — no free slot this week, it'll roll to next week.`,
+    message: `${target.title} — no open slot this week, it rolls to next week.`,
   };
+}
+
+/** On app open: auto-move overdue, movable/relocatable tasks to a later gap today. */
+export function rolloverOverdue(all: ScheduledBlock[]): ScheduledBlock[] {
+  const today = todayYmd();
+  const now = nowMinutes();
+  let blocks = all.map((b) => ({ ...b }));
+  const overdue = blocks.filter(
+    (b) =>
+      b.date === today &&
+      b.status === "planned" &&
+      !(b.commitment === "must" && b.locked) && // leave fixed class/work alone
+      minutes(b.startTime) + b.durationMin <= now // fully elapsed, untouched
+  );
+  for (const b of overdue) {
+    const res = skipBlock(blocks, b.id, "notime", today);
+    blocks = res.blocks;
+  }
+  return blocks;
 }
 
 /** Apply an energy state to a day: strip the appropriate tiers and reschedule them. */

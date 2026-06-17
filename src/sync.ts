@@ -1,0 +1,57 @@
+import type { AppState } from "./types";
+
+// Default to the home laptop's LAN IP over HTTPS. Override anytime via
+// localStorage.setItem("planr.api", "https://<ip>:<port>") or "" to disable.
+const DEFAULT_API = "https://10.0.0.151:8443";
+const API_KEY = "planr.api";
+
+export function apiBase(): string {
+  const v = localStorage.getItem(API_KEY);
+  return v == null ? DEFAULT_API : v;
+}
+
+interface Snapshot {
+  updatedAt: number;
+  state: AppState;
+}
+
+async function withTimeout(input: string, init: RequestInit = {}, ms = 2500): Promise<Response> {
+  const ctrl = new AbortController();
+  const id = setTimeout(() => ctrl.abort(), ms);
+  try {
+    return await fetch(input, { ...init, signal: ctrl.signal });
+  } finally {
+    clearTimeout(id);
+  }
+}
+
+/** Pull server snapshot if reachable; null if offline/away/error. */
+export async function pullState(): Promise<Snapshot | null> {
+  const base = apiBase();
+  if (!base) return null;
+  try {
+    const res = await withTimeout(`${base}/state`);
+    if (!res.ok) return null;
+    const data = (await res.json()) as { updatedAt: number; state: AppState | null };
+    if (!data.state) return null;
+    return { updatedAt: data.updatedAt, state: data.state };
+  } catch {
+    return null; // offline-first: never throw into the UI
+  }
+}
+
+/** Push local snapshot to the home backend (fire-and-forget safe). */
+export async function pushState(state: AppState): Promise<boolean> {
+  const base = apiBase();
+  if (!base) return false;
+  try {
+    const res = await withTimeout(`${base}/state`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ updatedAt: state.updatedAt, state }),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}

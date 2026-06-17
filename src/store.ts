@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppState, ScheduledBlock, SkipReason, Energy, ReviewAnswer } from "./types";
 import { GOALS, GOAL_DEADLINE } from "./tasks";
-import { generateWeekPlan, skipBlock, applyEnergy, addAppointment } from "./engine/scheduler";
+import { generateWeekPlan, skipBlock, applyEnergy, addAppointment, rolloverOverdue } from "./engine/scheduler";
 import { todayYmd, weekStartOf } from "./engine/dates";
+import { pullState, pushState, apiBase } from "./sync";
 
 const KEY = "planr.state.v1";
 
@@ -43,7 +44,8 @@ function load(): AppState {
     const raw = localStorage.getItem(KEY);
     if (!raw) return freshState();
     const parsed = JSON.parse(raw) as AppState;
-    return ensureCurrentWeek({ ...freshState(), ...parsed, goals: GOALS });
+    const rolled = ensureCurrentWeek({ ...freshState(), ...parsed, goals: GOALS });
+    return { ...rolled, blocks: toRecord(rolloverOverdue(Object.values(rolled.blocks))) };
   } catch {
     return freshState();
   }
@@ -52,9 +54,29 @@ function load(): AppState {
 export function useStore() {
   const [state, setState] = useState<AppState>(load);
 
+  // Persist locally (source of truth) + debounced push to home backend when reachable.
   useEffect(() => {
-    localStorage.setItem(KEY, JSON.stringify({ ...state, updatedAt: Date.now() }));
+    const snap = { ...state, updatedAt: Date.now() };
+    localStorage.setItem(KEY, JSON.stringify(snap));
+    if (!apiBase()) return;
+    const id = setTimeout(() => void pushState(snap), 800);
+    return () => clearTimeout(id);
   }, [state]);
+
+  // On open: pull from the home backend; adopt it only if it's newer.
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const server = await pullState();
+      if (cancelled || !server) return;
+      const raw = localStorage.getItem(KEY);
+      const localUpdated = raw ? (JSON.parse(raw).updatedAt ?? 0) : 0;
+      if (server.updatedAt > localUpdated) setState(ensureCurrentWeek(server.state));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const [toast, setToast] = useState<string>("");
   useEffect(() => {

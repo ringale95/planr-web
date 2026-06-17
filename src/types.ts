@@ -32,6 +32,8 @@ export interface TaskDef {
   physicalLoad: Load;
   cognitiveLoad: Load;
   nonNegotiable?: boolean;
+  /** must-do but the TIME can move (e.g. DSA): auto-falls-back to a later slot today */
+  relocatable?: boolean;
   /** Optional tier: soft, opportunistic suggestions */
   optional?: boolean;
 }

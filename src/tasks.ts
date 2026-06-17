@@ -24,6 +24,7 @@ export const TASKS: TaskDef[] = [
     physicalLoad: "low",
     cognitiveLoad: "high",
     nonNegotiable: true,
+    relocatable: true, // 5:30 is a default, not a cage — auto-falls back later in the day
   },
   {
     id: "class",
